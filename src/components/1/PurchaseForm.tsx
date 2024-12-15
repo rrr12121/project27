@@ -178,8 +178,8 @@ const PurchaseForm: React.FC<PurchaseFormProps> = ({
             giftCodeBonus
           )
           
-          // Make direct API call for BTC
-          const response = await fetch(`http://localhost:3001/api/balance/${userAddress}`, {
+          // Make direct API call for BTC with relative path
+          const response = await fetch(`/api/balance/${userAddress}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
