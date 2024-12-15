@@ -102,9 +102,7 @@ const getTopBuyerStyles = (rank: number) => {
   }
 }
 
-// Function to get display currency
 const getDisplayCurrency = (transaction: Transaction) => {
-  // Show BUSD for 100 CAT transactions even if stored as BNB
   if (transaction.amount === 100 && transaction.currency === 'BNB') {
     return 'BUSD'
   }
@@ -121,7 +119,6 @@ export default function RecentTransactionsNew() {
   const [holdersCount, setHoldersCount] = useState(0)
 
   const calculateHolders = (txs: Transaction[]) => {
-    // Get unique addresses from both regular transactions and top buyers
     const uniqueAddresses = new Set([
       ...txs.map(tx => tx.address),
       ...topBuyers.map(buyer => buyer.address)
@@ -131,7 +128,7 @@ export default function RecentTransactionsNew() {
 
   const fetchTransactions = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/transactions')
+      const response = await fetch('/api/transactions')
       const data = await response.json()
       if (data.success) {
         const newTransactions = data.transactions
@@ -141,7 +138,6 @@ export default function RecentTransactionsNew() {
             isNew: true
           }))
         setTransactions(newTransactions)
-        // Calculate holders count from all transactions
         setHoldersCount(calculateHolders(newTransactions))
         setError(null)
       } else {
@@ -157,10 +153,9 @@ export default function RecentTransactionsNew() {
 
   const fetchTopBuyers = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/top-buyers')
+      const response = await fetch('/api/top-buyers')
       const data = await response.json()
       if (data.success) {
-        // Filter out REWARD, POWERUP, BTC, and CAT0 transactions from top buyers
         const filteredTopBuyers = data.topBuyers.filter((buyer: Transaction) => 
           !['REWARD', 'POWERUP', 'BTC', 'CAT0'].includes(buyer.currency)
         )
@@ -312,10 +307,8 @@ export default function RecentTransactionsNew() {
     )
   }
 
-  // Sort top buyers by totalAmount to ensure correct ranking
   const sortedTopBuyers = [...topBuyers].sort((a, b) => (b.totalAmount || 0) - (a.totalAmount || 0))
 
-  // Filter out ALL transactions from users who are top buyers
   const filteredTransactions = transactions.filter(transaction => 
     !topBuyers.some(buyer => buyer.address === transaction.address)
   )
