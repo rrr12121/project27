@@ -1,6 +1,7 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const cors = require('cors');
+const path = require('path');
 
 const prisma = new PrismaClient({
   log: ['query', 'error', 'warn']
@@ -17,6 +18,9 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// Serve static files from the React build directory
+app.use(express.static(path.join(__dirname, 'build')));
 
 // Helper function to safely convert any value to BigInt
 const toBigInt = (value) => {
@@ -35,11 +39,9 @@ const fromBigInt = (value) => {
 
 // Helper function to determine VIP status based on balance
 const getVipStatus = (balance) => {
-  // Convert BigInt to number if needed
   const balanceNum = typeof balance === 'bigint' ? Number(balance) : Number(balance);
   console.log('Calculating VIP status for balance:', balanceNum);
   
-  // VIP thresholds in Cat0 tokens
   if (balanceNum >= 500000) {
     console.log('VIP Status: Diamond');
     return 'Diamond';
@@ -62,7 +64,6 @@ const getVipStatus = (balance) => {
 
 // Helper function to determine stage based on progress
 const getStageFromProgress = (progress) => {
-  // Calculate the actual stage based on raised amount
   const stageThresholds = {
     7: 90,  // Stage 7: 90-100%
     6: 75,  // Stage 6: 75-89.99%
@@ -73,14 +74,13 @@ const getStageFromProgress = (progress) => {
     1: 0    // Stage 1: 0-14.99%
   };
 
-  // Find the highest threshold that the progress exceeds
   for (const [stage, threshold] of Object.entries(stageThresholds)) {
     if (progress >= threshold) {
       return parseInt(stage);
     }
   }
 
-  return 1; // Default to stage 1 if no threshold is met
+  return 1;
 };
 
 // Helper function to calculate total amount raised
@@ -88,29 +88,26 @@ const calculateTotalRaised = async (prisma) => {
   const result = await prisma.$queryRaw`
     SELECT 
       COALESCE(SUM(CASE 
-        WHEN currency = 'USDT' THEN amount -- USDT is already in dollars
-        WHEN currency = 'BNB' THEN amount -- BNB is already in dollars
-        ELSE amount -- Other amounts are in dollars
+        WHEN currency = 'USDT' THEN amount
+        WHEN currency = 'BNB' THEN amount
+        ELSE amount
       END), 0) as total_amount
     FROM "Transaction"
     WHERE currency NOT IN ('REWARD', 'BTC', 'CAT0')
   `;
-  return toBigInt(Math.round(result[0].total_amount * 100)); // Convert dollars to cents
+  return toBigInt(Math.round(result[0].total_amount * 100));
 };
 
 // Helper function to initialize or update stage progress
 const initializeStageProgress = async (prisma) => {
   try {
-    // Calculate total amount raised from transactions
     const totalAmount = await calculateTotalRaised(prisma);
-    const targetAmount = toBigInt(1000000000 * 100); // $10M in cents ($10,000,000 * 100)
+    const targetAmount = toBigInt(1000000000 * 100);
     const progressPercentage = (Number(totalAmount) / Number(targetAmount)) * 100;
     
-    // Calculate stage based on percentage
     const currentStage = getStageFromProgress(progressPercentage);
     console.log('Current progress:', progressPercentage.toFixed(2) + '%', 'Stage:', currentStage);
 
-    // Update or create stage progress record
     const progress = await prisma.stageProgress.upsert({
       where: { id: 1 },
       create: {
@@ -135,13 +132,11 @@ const initializeStageProgress = async (prisma) => {
   }
 };
 
-// GET progress info
+// API Routes
 app.get('/api/progress', async (req, res) => {
   try {
-    // Always recalculate and update progress before sending response
     const progress = await initializeStageProgress(prisma);
     
-    // Convert values from cents to dollars for display
     const amountRaised = fromBigInt(progress.amountRaised) / 100;
     const targetAmount = fromBigInt(progress.targetAmount) / 100;
     const progressPercentage = (amountRaised / targetAmount) * 100;
@@ -164,19 +159,18 @@ app.get('/api/progress', async (req, res) => {
   }
 });
 
-// GET transactions
 app.get('/api/transactions', async (req, res) => {
   try {
     const transactions = await prisma.transaction.findMany({
       orderBy: {
         timestamp: 'desc'
       },
-      take: 10 // Limit to last 10 transactions
+      take: 10
     });
 
     const convertedTransactions = transactions.map(tx => ({
       id: tx.id,
-      amount: fromBigInt(tx.amount) / (tx.currency === 'CAT0' ? 1 : 100), // Convert everything except CAT0 to dollars
+      amount: fromBigInt(tx.amount) / (tx.currency === 'CAT0' ? 1 : 100),
       price: tx.price,
       address: tx.address,
       currency: tx.currency,
@@ -197,17 +191,15 @@ app.get('/api/transactions', async (req, res) => {
   }
 });
 
-// GET top buyers
 app.get('/api/top-buyers', async (req, res) => {
   try {
-    // Get total amounts per address
     const addressTotals = await prisma.$queryRaw`
       SELECT 
         address,
         SUM(CASE 
-          WHEN currency = 'USDT' THEN amount -- USDT is already in dollars
+          WHEN currency = 'USDT' THEN amount
           WHEN currency = 'CAT0' THEN amount
-          ELSE amount -- Other amounts are in dollars
+          ELSE amount
         END) as total_amount,
         MAX(timestamp) as latest_timestamp
       FROM "Transaction"
@@ -217,7 +209,6 @@ app.get('/api/top-buyers', async (req, res) => {
       LIMIT 3
     `;
 
-    // Rest of the top-buyers code remains the same
     const topBuyersWithDetails = await Promise.all(
       addressTotals.map(async (total) => {
         const latestTransaction = await prisma.transaction.findFirst({
@@ -227,8 +218,8 @@ app.get('/api/top-buyers', async (req, res) => {
           }
         });
 
-        const totalAmountBigInt = toBigInt(Math.round(total.total_amount * 100)); // Convert to cents
-        const totalCatoValue = fromBigInt(totalAmountBigInt) / 100; // Convert back to dollars
+        const totalAmountBigInt = toBigInt(Math.round(total.total_amount * 100));
+        const totalCatoValue = fromBigInt(totalAmountBigInt) / 100;
         const bnbPrice = totalCatoValue / 600;
 
         return {
@@ -254,7 +245,6 @@ app.get('/api/top-buyers', async (req, res) => {
   }
 });
 
-// GET balance
 app.get('/api/balance/:address', async (req, res) => {
   console.log('GET request received for address:', req.params.address);
   const { address } = req.params;
@@ -283,7 +273,6 @@ app.get('/api/balance/:address', async (req, res) => {
   }
 });
 
-// GET reward balance
 app.get('/api/reward-balance/:address', async (req, res) => {
   console.log('GET reward balance request received for address:', req.params.address);
   const { address } = req.params;
@@ -307,7 +296,6 @@ app.get('/api/reward-balance/:address', async (req, res) => {
   }
 });
 
-// POST reward balance
 app.post('/api/reward-balance/:address', async (req, res) => {
   console.log('POST reward balance request received:', {
     address: req.params.address,
@@ -345,7 +333,6 @@ app.post('/api/reward-balance/:address', async (req, res) => {
   }
 });
 
-// POST balance
 app.post('/api/balance/:address', async (req, res) => {
   console.log('POST request received:', {
     address: req.params.address,
@@ -365,28 +352,22 @@ app.post('/api/balance/:address', async (req, res) => {
   try {
     let updatedBalance;
     
-    // Start a transaction to ensure both balance update and transaction creation succeed
     const result = await prisma.$transaction(async (prisma) => {
-      // Get current balance
       const currentBalance = await prisma.balance.findUnique({
         where: { address: address.toLowerCase() },
         select: { amount: true }
       });
       
-      // Convert balance to BigInt, handling different currencies
       const bonusMultiplier = 1 + giftCodeBonus;
       let adjustedBalance = balance;
       
-      // For Cat0 tokens (from frontend conversion), don't apply any additional conversion
-      // The frontend has already converted the currency amount to Cat0 tokens
       adjustedBalance = balance;
       
       const balanceWithBonus = adjustedBalance * bonusMultiplier;
       const balanceInt = toBigInt(balanceWithBonus);
-      const originalBalanceInt = toBigInt(adjustedBalance); // Store original balance without bonus
+      const originalBalanceInt = toBigInt(adjustedBalance);
       const currentBalanceInt = currentBalance ? toBigInt(currentBalance.amount) : BigInt(0);
       
-      // Safe conversion for logging
       const currentBalanceNum = fromBigInt(currentBalanceInt);
       
       console.log('Current balance:', currentBalanceNum);
@@ -394,46 +375,38 @@ app.post('/api/balance/:address', async (req, res) => {
       console.log('Gift code bonus:', giftCodeBonus);
       console.log('Balance with bonus:', balanceWithBonus);
       console.log('Balance to add (in internal units):', balanceInt.toString());
-      console.log('Transaction price:', price); // Log the actual price being used
+      console.log('Transaction price:', price);
 
-      // For BTC payments, only create transaction record without updating balance
       if (currency === 'BTC') {
-        // Parse price as float and ensure it's a valid number
         const parsedPrice = parseFloat(price);
         console.log('Creating BTC transaction with raw price:', price);
         console.log('Parsed BTC price:', parsedPrice);
         
-        // Create a transaction record for BTC payment
         await prisma.transaction.create({
           data: {
-            amount: originalBalanceInt, // Use original amount without bonus
-            price: !isNaN(parsedPrice) ? parsedPrice : 0, // Use parsed price if valid, otherwise 0
+            amount: originalBalanceInt,
+            price: !isNaN(parsedPrice) ? parsedPrice : 0,
             address: address.toLowerCase(),
             currency: currency,
             timestamp: new Date()
           }
         });
 
-        // Return current balance without modification
         return currentBalance || { amount: currentBalanceInt };
       }
       
-      // For non-BTC payments, proceed with normal balance update logic
       const shouldAddToBalance = isReward ? true : addToBalance;
       
-      // Calculate new balance based on whether we're adding or setting
       const newBalance = shouldAddToBalance ? 
         currentBalanceInt + balanceInt :
         balanceInt;
       
-      // Calculate the difference for the transaction amount
       const transactionAmount = shouldAddToBalance ? 
-        originalBalanceInt : // If adding, use the original amount without bonus
-        originalBalanceInt - currentBalanceInt; // If setting, use the difference
+        originalBalanceInt :
+        originalBalanceInt - currentBalanceInt;
       
       console.log('New balance will be:', fromBigInt(newBalance));
       
-      // Update or create balance
       updatedBalance = await prisma.balance.upsert({
         where: { address: address.toLowerCase() },
         create: {
@@ -448,10 +421,8 @@ app.post('/api/balance/:address', async (req, res) => {
         }
       });
 
-      // Calculate VIP status based on new balance
       const vipStatus = getVipStatus(newBalance);
 
-      // Update power level with new VIP status
       await prisma.powerLevel.upsert({
         where: { address: address.toLowerCase() },
         create: {
@@ -467,20 +438,18 @@ app.post('/api/balance/:address', async (req, res) => {
         }
       });
 
-      // Create a transaction record for all balance changes
       if (transactionAmount !== BigInt(0)) {
         const absTransactionAmount = transactionAmount < BigInt(0) ? -transactionAmount : transactionAmount;
         await prisma.transaction.create({
           data: {
-            amount: absTransactionAmount, // Use original amount without bonus
-            price: price || 0, // Use provided price or 0 if undefined
+            amount: absTransactionAmount,
+            price: price || 0,
             address: address.toLowerCase(),
             currency: isReward ? 'REWARD' : currency,
             timestamp: new Date()
           }
         });
 
-        // Update stage progress after transaction
         await initializeStageProgress(prisma);
       }
 
@@ -504,7 +473,11 @@ app.post('/api/balance/:address', async (req, res) => {
   }
 });
 
-// Add port configuration and start server
+// Serve React app for all other routes
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'build', 'index.html'));
+});
+
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
