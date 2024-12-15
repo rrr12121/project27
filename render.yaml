@@ -2,13 +2,31 @@ services:
   - type: web
     name: project27
     env: node
-    buildCommand: npm install --legacy-peer-deps && npm install -g serve && npm run build
-    startCommand: serve -s build
+    buildCommand: |
+      npm install --legacy-peer-deps && 
+      npm run build && 
+      npx prisma generate
+    startCommand: |
+      npx prisma db push --accept-data-loss && 
+      node server.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
       - key: DATABASE_URL
-        value: postgres://cat0_user:Hs0Hs0Hs0@dpg-cnqmhbf109ks73f2h7b0-a.oregon-postgres.render.com/cat0?sslmode=require
+        value: postgresql://project24_db_user:gqXSU51SM9wFzfKcndgRhaqeBQXWQrVk@dpg-ctfccnt2ng1s738idje0-a/project24_db
+      - key: CORS_ORIGIN
+        value: https://project24-sinw.onrender.com
+    headers:
+      - path: /*
+        name: Access-Control-Allow-Origin
+        value: https://project24-sinw.onrender.com
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: /api/$1
+      - type: rewrite
+        source: /*
+        destination: /index.html
     autoDeploy: true
