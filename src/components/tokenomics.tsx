@@ -1,7 +1,7 @@
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { Tabs, TabsContent } from "@/components/ui/tabs"
-import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent } from "../components/ui/tabs"
+import { Card, CardContent } from "../components/ui/card"
+import { Button } from "../components/ui/button"
 import { ArrowRight, Wallet } from "lucide-react"
 
 export default function Tokenomics() {
