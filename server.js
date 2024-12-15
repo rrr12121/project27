@@ -9,9 +9,10 @@ const prisma = new PrismaClient({
 
 const app = express();
 
-// Configure CORS to allow requests from our React app
+// Configure CORS with environment variable
+const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:3000';
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002'],
+  origin: corsOrigin,
   methods: ['GET', 'POST', 'OPTIONS'],
   credentials: true,
   allowedHeaders: ['Content-Type', 'Accept', 'Cache-Control']
@@ -159,6 +160,7 @@ app.get('/api/progress', async (req, res) => {
   }
 });
 
+// GET transactions
 app.get('/api/transactions', async (req, res) => {
   try {
     const transactions = await prisma.transaction.findMany({
@@ -191,6 +193,7 @@ app.get('/api/transactions', async (req, res) => {
   }
 });
 
+// GET top buyers
 app.get('/api/top-buyers', async (req, res) => {
   try {
     const addressTotals = await prisma.$queryRaw`
@@ -245,6 +248,7 @@ app.get('/api/top-buyers', async (req, res) => {
   }
 });
 
+// GET balance
 app.get('/api/balance/:address', async (req, res) => {
   console.log('GET request received for address:', req.params.address);
   const { address } = req.params;
@@ -273,6 +277,7 @@ app.get('/api/balance/:address', async (req, res) => {
   }
 });
 
+// GET reward balance
 app.get('/api/reward-balance/:address', async (req, res) => {
   console.log('GET reward balance request received for address:', req.params.address);
   const { address } = req.params;
@@ -296,6 +301,7 @@ app.get('/api/reward-balance/:address', async (req, res) => {
   }
 });
 
+// POST reward balance
 app.post('/api/reward-balance/:address', async (req, res) => {
   console.log('POST reward balance request received:', {
     address: req.params.address,
@@ -333,6 +339,7 @@ app.post('/api/reward-balance/:address', async (req, res) => {
   }
 });
 
+// POST balance
 app.post('/api/balance/:address', async (req, res) => {
   console.log('POST request received:', {
     address: req.params.address,
