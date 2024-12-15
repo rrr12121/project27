@@ -422,7 +422,7 @@ const RewardsSection: React.FC<RewardsSectionProps> = ({
       localStorage.removeItem(SPECIAL_BLOCK_MESSAGE_KEY);
 
       // Send claim request to server
-      const response = await fetch(`http://localhost:3001/api/claim-rewards/${address}`, {
+      const response = await fetch(`/api/claim-rewards/${address}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
