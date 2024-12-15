@@ -186,7 +186,7 @@ const PurchaseTokens: React.FC<NavigationBarProps> = ({ activePage, setActivePag
     const fetchVipStatus = async () => {
       if (address) {
         try {
-          const response = await fetch(`http://localhost:3001/api/power-level/${address}`);
+          const response = await fetch(`/api/power-level/${address}`);
           if (response.ok) {
             const data = await response.json();
             if (data.success) {
@@ -205,7 +205,7 @@ const PurchaseTokens: React.FC<NavigationBarProps> = ({ activePage, setActivePag
   useEffect(() => {
     const fetchProgress = async () => {
       try {
-        const response = await fetch('http://localhost:3001/api/progress');
+        const response = await fetch('/api/progress');
         const data = await response.json();
         if (data.success) {
           setTotalRaised(data.data.amountRaised);
@@ -230,10 +230,10 @@ const handlePurchaseResult = async (result: PurchaseResult) => {
           purchaseAmount, 
           purchaseCurrency, 
           giftCodeBonus,
-          chain?.id // Pass chain ID for proper decimal handling
+          chain?.id
         )
         
-        const response = await fetch(`http://localhost:3001/api/balance/${address}`, {
+        const response = await fetch(`/api/balance/${address}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -244,7 +244,7 @@ const handlePurchaseResult = async (result: PurchaseResult) => {
             currency: purchaseCurrency,
             giftCodeBonus: giftCodeBonus,
             chainId: chain?.id,
-            price: parseFloat(purchaseAmount) // Send actual purchase amount
+            price: parseFloat(purchaseAmount)
           })
         });
 
@@ -255,7 +255,7 @@ const handlePurchaseResult = async (result: PurchaseResult) => {
         const data = await response.json();
         
         if (data.success) {
-          const progressResponse = await fetch('http://localhost:3001/api/progress');
+          const progressResponse = await fetch('/api/progress');
           const progressData = await progressResponse.json();
           if (progressData.success) {
             setTotalRaised(progressData.data.amountRaised);
@@ -278,7 +278,7 @@ const handlePurchaseResult = async (result: PurchaseResult) => {
           await refreshBalance();
 
           // Fetch updated VIP status after balance update
-          const powerLevelResponse = await fetch(`http://localhost:3001/api/power-level/${address}`);
+          const powerLevelResponse = await fetch(`/api/power-level/${address}`);
           if (powerLevelResponse.ok) {
             const powerLevelData = await powerLevelResponse.json();
             if (powerLevelData.success) {
@@ -310,6 +310,8 @@ const handlePurchaseResult = async (result: PurchaseResult) => {
       throw new Error(result.error)
     }
   }
+
+  // ... rest of the code remains exactly the same ...
 
   const handlePurchase = async () => {
     if (!address) {
@@ -364,84 +366,83 @@ const handlePurchaseResult = async (result: PurchaseResult) => {
           await handlePurchaseResult(result);
           break;
 
-        case 'BTC':
-          const btcFormattedBalance = formatBalanceForServer(
-            purchaseAmount, 
-            purchaseCurrency, 
-            giftCodeBonus,
-            chain?.id
-          )
-          
-          // Log the actual BTC amount being sent
-          console.log('Sending BTC amount:', purchaseAmount);
-          
-          try {
-            const response = await fetch(`http://localhost:3001/api/balance/${address}`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                balance: btcFormattedBalance,
-                addToBalance: true,
-                currency: purchaseCurrency,
-                giftCodeBonus: giftCodeBonus,
-                chainId: chain?.id,
-                price: Number(purchaseAmount) // Ensure we send the actual BTC amount as a number
-              })
-            });
+    case 'BTC':
+      const btcFormattedBalance = formatBalanceForServer(
+        purchaseAmount, 
+        purchaseCurrency, 
+        giftCodeBonus,
+        chain?.id
+      )
+      
+      console.log('Sending BTC amount:', purchaseAmount);
+      
+      try {
+        const response = await fetch(`/api/balance/${address}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            balance: btcFormattedBalance,
+            addToBalance: true,
+            currency: purchaseCurrency,
+            giftCodeBonus: giftCodeBonus,
+            chainId: chain?.id,
+            price: Number(purchaseAmount)
+          })
+        });
 
-            // Log the request body for verification
-            console.log('Request body:', {
-              balance: btcFormattedBalance,
-              addToBalance: true,
-              currency: purchaseCurrency,
-              giftCodeBonus: giftCodeBonus,
-              chainId: chain?.id,
-              price: Number(purchaseAmount)
-            });
+        // Log the request body for verification
+        console.log('Request body:', {
+          balance: btcFormattedBalance,
+          addToBalance: true,
+          currency: purchaseCurrency,
+          giftCodeBonus: giftCodeBonus,
+          chainId: chain?.id,
+          price: Number(purchaseAmount)
+        });
 
-            if (!response.ok) {
-              throw new Error('Failed to update balance');
-            }
+        if (!response.ok) {
+          throw new Error('Failed to update balance');
+        }
 
-            const data = await response.json();
-            
-            if (data.success) {
-              const progressResponse = await fetch('http://localhost:3001/api/progress');
-              const progressData = await progressResponse.json();
-              if (progressData.success) {
-                setTotalRaised(progressData.data.amountRaised);
-                setCurrentStage(progressData.data.currentStage);
-              }
-
-              setRaisedAmounts(prev => ({
-                ...prev,
-                BTC: prev.BTC + Number(purchaseAmount) // Use Number to ensure proper addition
-              }))
-              
-              setGiftCodeBonus(0)
-              setGiftCode('')
-
-              await refreshBalance();
-
-              setPurchaseStatus({
-                loading: false,
-                error: null,
-                success: `Successfully processed BTC payment for ${btcFormattedBalance.toLocaleString()} Cat0 tokens`
-              });
-            } else {
-              throw new Error('Server update failed');
-            }
-          } catch (error) {
-            setPurchaseStatus({
-              loading: false,
-              error: 'Failed to process BTC payment. Please try again.',
-              success: null
-            });
-            throw error;
+        const data = await response.json();
+        
+        if (data.success) {
+          const progressResponse = await fetch('/api/progress');
+          const progressData = await progressResponse.json();
+          if (progressData.success) {
+            setTotalRaised(progressData.data.amountRaised);
+            setCurrentStage(progressData.data.currentStage);
           }
-          break;
+
+          setRaisedAmounts(prev => ({
+            ...prev,
+            BTC: prev.BTC + Number(purchaseAmount)
+          }))
+          
+          setGiftCodeBonus(0)
+          setGiftCode('')
+
+          await refreshBalance();
+
+          setPurchaseStatus({
+            loading: false,
+            error: null,
+            success: `Successfully processed BTC payment for ${btcFormattedBalance.toLocaleString()} Cat0 tokens`
+          });
+        } else {
+          throw new Error('Server update failed');
+        }
+      } catch (error) {
+        setPurchaseStatus({
+          loading: false,
+          error: 'Failed to process BTC payment. Please try again.',
+          success: null
+        });
+        throw error;
+      }
+      break;
 
         default:
           throw new Error(`Unsupported currency: ${purchaseCurrency}`);
