@@ -3,7 +3,7 @@ import { POWER_UP_COST_BASE, MAX_POWER_LEVEL, LOOT_BOX_COST, JACKPOT_CHANCE } fr
 import { LootBoxReward } from './types'
 import { useBalance } from '../../context/BalanceContext'
 
-// Add localStorage keys
+// All localStorage keys
 const REWARDS_STORAGE_KEY = 'cat0_rewards_earned'
 const POWER_LEVEL_STORAGE_KEY = 'cat0_power_level'
 const MULTIPLIER_STORAGE_KEY = 'cat0_multiplier'
@@ -50,7 +50,6 @@ export const useTimeLeft = () => {
 
 export const useRewards = (accountBalance: number, updateBalance: (newBalance: number, addToBalance?: boolean) => Promise<void>) => {
   const { refreshBalance } = useBalance();
-  // Initialize state from localStorage with fallbacks
   const [rewardsEarned, setRewardsEarned] = useState(() => {
     const saved = localStorage.getItem(REWARDS_STORAGE_KEY)
     return saved ? parseFloat(saved) : 0
@@ -111,7 +110,7 @@ export const useRewards = (accountBalance: number, updateBalance: (newBalance: n
       const address = await getWalletAddress();
       if (address) {
         try {
-          const response = await fetch(`http://localhost:3001/api/power-level/${address}`);
+          const response = await fetch(`/api/power-level/${address}`);
           if (!response.ok) {
             throw new Error('Failed to fetch power level');
           }
@@ -212,7 +211,7 @@ export const useRewards = (accountBalance: number, updateBalance: (newBalance: n
   // Add function to fetch power level from server
   const fetchPowerLevel = useCallback(async (address: string) => {
     try {
-      const response = await fetch(`http://localhost:3001/api/power-level/${address}`);
+      const response = await fetch(`/api/power-level/${address}`);
       if (!response.ok) {
         throw new Error('Failed to fetch power level');
       }
@@ -258,7 +257,7 @@ export const useRewards = (accountBalance: number, updateBalance: (newBalance: n
         }
 
         // Call the claim-rewards endpoint
-        const response = await fetch(`http://localhost:3001/api/claim-rewards/${address}`, {
+        const response = await fetch(`/api/claim-rewards/${address}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -310,7 +309,7 @@ export const useRewards = (accountBalance: number, updateBalance: (newBalance: n
         }
 
         // First update server power level
-        const response = await fetch(`http://localhost:3001/api/power-level/${address}`, {
+        const response = await fetch(`/api/power-level/${address}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -490,7 +489,7 @@ export const useLootBox = (
         }
 
         // Get current power level from server
-        const powerResponse = await fetch(`http://localhost:3001/api/power-level/${address}`);
+        const powerResponse = await fetch(`/api/power-level/${address}`);
         if (!powerResponse.ok) {
           throw new Error('Failed to fetch power level');
         }
@@ -514,7 +513,7 @@ export const useLootBox = (
           })
         } else {
           // Update power level on server - only increment by 1
-          const response = await fetch(`http://localhost:3001/api/power-level/${address}`, {
+          const response = await fetch(`/api/power-level/${address}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
