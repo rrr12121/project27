@@ -29,7 +29,6 @@ interface BalanceResponse {
   error?: string;
 }
 
-const API_BASE_URL = 'http://localhost:3001';
 const POLLING_INTERVAL = 60000; // 60 seconds in milliseconds
 
 export const BalanceProvider: React.FC<BalanceProviderProps> = ({ children }) => {
@@ -48,7 +47,7 @@ export const BalanceProvider: React.FC<BalanceProviderProps> = ({ children }) =>
     setError(null);
     
     try {
-      const response = await fetch(`${API_BASE_URL}/api/balance/${address}`, {
+      const response = await fetch(`/api/balance/${address}`, {
         headers: {
           'Accept': 'application/json',
           'Cache-Control': 'no-cache'
@@ -83,7 +82,7 @@ export const BalanceProvider: React.FC<BalanceProviderProps> = ({ children }) =>
     setError(null);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/balance/${address}`, {
+      const response = await fetch(`/api/balance/${address}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
