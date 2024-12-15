@@ -4,11 +4,10 @@ services:
     env: node
     buildCommand: |
       npm install --legacy-peer-deps && 
-      npm install -g serve &&
       npm run build && 
       npx prisma generate &&
       npx prisma db push --accept-data-loss
-    startCommand: serve -s build
+    startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
