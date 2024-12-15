@@ -2,11 +2,13 @@ services:
   - type: web
     name: project27
     env: node
-    buildCommand: npm install --legacy-peer-deps && npm run build && npx prisma generate && npx prisma migrate deploy
-    startCommand: node server.js
+    buildCommand: npm install --legacy-peer-deps && npm install -g serve && npm run build && npx prisma generate && npx prisma migrate deploy
+    startCommand: serve -s build
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
+      - key: DATABASE_URL
+        value: postgres://cat0_user:Hs0Hs0Hs0@dpg-cnqmhbf109ks73f2h7b0-a.oregon-postgres.render.com/cat0
     autoDeploy: true
