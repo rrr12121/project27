@@ -1,0 +1,86 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Balance {
+  id           Int           @id @default(autoincrement())
+  address      String        @unique
+  amount       BigInt        @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+  powerLevel   PowerLevel?
+  claimLock    ClaimLock?
+  rewardBalance RewardBalance?
+
+  @@index([address])
+}
+
+model Transaction {
+  id        String   @id @default(uuid())
+  amount    BigInt
+  price     Float
+  address   String
+  currency  String
+  timestamp DateTime @default(now())
+  balance   Balance  @relation(fields: [address], references: [address])
+
+  @@index([address])
+}
+
+model StageProgress {
+  id            Int      @id @default(autoincrement())
+  amountRaised  BigInt   @default(0)
+  targetAmount  BigInt   @default(10000000) // $10M
+  currentStage  Int      @default(1)
+  updatedAt     DateTime @updatedAt
+
+  @@map("stage_progress")
+}
+
+enum VipStatus {
+  Bronze
+  Silver
+  Gold
+  Platinum
+  Diamond
+}
+
+model PowerLevel {
+  id         Int       @id @default(autoincrement())
+  level      Int       @default(1)
+  multiplier Float     @default(1.0)
+  vipStatus  VipStatus @default(Bronze)
+  address    String    @unique
+  updatedAt  DateTime  @updatedAt
+  balance    Balance   @relation(fields: [address], references: [address])
+
+  @@map("power_level")
+  @@index([address])
+}
+
+model ClaimLock {
+  id            Int      @id @default(autoincrement())
+  address       String   @unique
+  lastClaimTime DateTime @default(now())
+  balance       Balance  @relation(fields: [address], references: [address])
+
+  @@map("claim_lock")
+  @@index([address])
+}
+
+model RewardBalance {
+  id            Int      @id @default(autoincrement())
+  address       String   @unique
+  amount        Float    @default(0)
+  updatedAt     DateTime @updatedAt
+  balance       Balance  @relation(fields: [address], references: [address])
+
+  @@map("reward_balance")
+  @@index([address])
+}
