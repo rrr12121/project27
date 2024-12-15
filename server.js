@@ -3,25 +3,15 @@ const { PrismaClient } = require('@prisma/client');
 const cors = require('cors');
 const path = require('path');
 
+// Create Prisma client with connection pooling
 const prisma = new PrismaClient({
-  log: ['query', 'error', 'warn']
+  log: ['query', 'error', 'warn'],
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL
+    }
+  }
 });
-
-const app = express();
-
-// Configure CORS with environment variable
-const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:3000';
-app.use(cors({
-  origin: corsOrigin,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  credentials: true,
-  allowedHeaders: ['Content-Type', 'Accept', 'Cache-Control']
-}));
-
-app.use(express.json());
-
-// Serve static files from the React build directory
-app.use(express.static(path.join(__dirname, 'build')));
 
 // Helper function to safely convert any value to BigInt
 const toBigInt = (value) => {
@@ -133,10 +123,48 @@ const initializeStageProgress = async (prisma) => {
   }
 };
 
-// API Routes
+const app = express();
+
+// Configure CORS with environment variable
+const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:3000';
+app.use(cors({
+  origin: corsOrigin,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Accept', 'Cache-Control']
+}));
+
+app.use(express.json());
+
+// Serve static files from the React build directory
+app.use(express.static(path.join(__dirname, 'build')));
+
+// Helper function to retry database operations
+const withRetry = async (operation, maxRetries = 3) => {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await operation();
+    } catch (error) {
+      console.error(`Attempt ${i + 1} failed:`, error);
+      lastError = error;
+      if (i < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+        try {
+          await prisma.$connect();
+        } catch (connectError) {
+          console.error('Reconnection failed:', connectError);
+        }
+      }
+    }
+  }
+  throw lastError;
+};
+
+// API Routes with retry logic
 app.get('/api/progress', async (req, res) => {
   try {
-    const progress = await initializeStageProgress(prisma);
+    const progress = await withRetry(() => initializeStageProgress(prisma));
     
     const amountRaised = fromBigInt(progress.amountRaised) / 100;
     const targetAmount = fromBigInt(progress.targetAmount) / 100;
@@ -160,15 +188,16 @@ app.get('/api/progress', async (req, res) => {
   }
 });
 
-// GET transactions
 app.get('/api/transactions', async (req, res) => {
   try {
-    const transactions = await prisma.transaction.findMany({
-      orderBy: {
-        timestamp: 'desc'
-      },
-      take: 10
-    });
+    const transactions = await withRetry(() => 
+      prisma.transaction.findMany({
+        orderBy: {
+          timestamp: 'desc'
+        },
+        take: 10
+      })
+    );
 
     const convertedTransactions = transactions.map(tx => ({
       id: tx.id,
@@ -193,33 +222,36 @@ app.get('/api/transactions', async (req, res) => {
   }
 });
 
-// GET top buyers
 app.get('/api/top-buyers', async (req, res) => {
   try {
-    const addressTotals = await prisma.$queryRaw`
-      SELECT 
-        address,
-        SUM(CASE 
-          WHEN currency = 'USDT' THEN amount
-          WHEN currency = 'CAT0' THEN amount
-          ELSE amount
-        END) as total_amount,
-        MAX(timestamp) as latest_timestamp
-      FROM "Transaction"
-      WHERE currency NOT IN ('BTC', 'CAT0')
-      GROUP BY address
-      ORDER BY SUM(amount) DESC
-      LIMIT 3
-    `;
+    const addressTotals = await withRetry(() => 
+      prisma.$queryRaw`
+        SELECT 
+          address,
+          SUM(CASE 
+            WHEN currency = 'USDT' THEN amount
+            WHEN currency = 'CAT0' THEN amount
+            ELSE amount
+          END) as total_amount,
+          MAX(timestamp) as latest_timestamp
+        FROM "Transaction"
+        WHERE currency NOT IN ('BTC', 'CAT0')
+        GROUP BY address
+        ORDER BY SUM(amount) DESC
+        LIMIT 3
+      `
+    );
 
     const topBuyersWithDetails = await Promise.all(
       addressTotals.map(async (total) => {
-        const latestTransaction = await prisma.transaction.findFirst({
-          where: { 
-            address: total.address,
-            timestamp: total.latest_timestamp
-          }
-        });
+        const latestTransaction = await withRetry(() =>
+          prisma.transaction.findFirst({
+            where: { 
+              address: total.address,
+              timestamp: total.latest_timestamp
+            }
+          })
+        );
 
         const totalAmountBigInt = toBigInt(Math.round(total.total_amount * 100));
         const totalCatoValue = fromBigInt(totalAmountBigInt) / 100;
@@ -248,16 +280,17 @@ app.get('/api/top-buyers', async (req, res) => {
   }
 });
 
-// GET balance
 app.get('/api/balance/:address', async (req, res) => {
   console.log('GET request received for address:', req.params.address);
   const { address } = req.params;
 
   try {
-    const userBalance = await prisma.balance.findUnique({
-      where: { address: address.toLowerCase() },
-      select: { amount: true }
-    });
+    const userBalance = await withRetry(() =>
+      prisma.balance.findUnique({
+        where: { address: address.toLowerCase() },
+        select: { amount: true }
+      })
+    );
 
     console.log('Found balance:', userBalance);
 
@@ -277,15 +310,16 @@ app.get('/api/balance/:address', async (req, res) => {
   }
 });
 
-// GET reward balance
 app.get('/api/reward-balance/:address', async (req, res) => {
   console.log('GET reward balance request received for address:', req.params.address);
   const { address } = req.params;
 
   try {
-    const rewardBalance = await prisma.rewardBalance.findUnique({
-      where: { address: address.toLowerCase() }
-    });
+    const rewardBalance = await withRetry(() =>
+      prisma.rewardBalance.findUnique({
+        where: { address: address.toLowerCase() }
+      })
+    );
 
     res.json({
       success: true,
@@ -301,7 +335,6 @@ app.get('/api/reward-balance/:address', async (req, res) => {
   }
 });
 
-// POST reward balance
 app.post('/api/reward-balance/:address', async (req, res) => {
   console.log('POST reward balance request received:', {
     address: req.params.address,
@@ -312,18 +345,20 @@ app.post('/api/reward-balance/:address', async (req, res) => {
   const { amount } = req.body;
 
   try {
-    const result = await prisma.rewardBalance.upsert({
-      where: { address: address.toLowerCase() },
-      create: {
-        address: address.toLowerCase(),
-        amount: amount,
-        updatedAt: new Date()
-      },
-      update: {
-        amount: amount,
-        updatedAt: new Date()
-      }
-    });
+    const result = await withRetry(() =>
+      prisma.rewardBalance.upsert({
+        where: { address: address.toLowerCase() },
+        create: {
+          address: address.toLowerCase(),
+          amount: amount,
+          updatedAt: new Date()
+        },
+        update: {
+          amount: amount,
+          updatedAt: new Date()
+        }
+      })
+    );
 
     res.json({
       success: true,
@@ -339,7 +374,6 @@ app.post('/api/reward-balance/:address', async (req, res) => {
   }
 });
 
-// POST balance
 app.post('/api/balance/:address', async (req, res) => {
   console.log('POST request received:', {
     address: req.params.address,
@@ -359,109 +393,111 @@ app.post('/api/balance/:address', async (req, res) => {
   try {
     let updatedBalance;
     
-    const result = await prisma.$transaction(async (prisma) => {
-      const currentBalance = await prisma.balance.findUnique({
-        where: { address: address.toLowerCase() },
-        select: { amount: true }
-      });
-      
-      const bonusMultiplier = 1 + giftCodeBonus;
-      let adjustedBalance = balance;
-      
-      adjustedBalance = balance;
-      
-      const balanceWithBonus = adjustedBalance * bonusMultiplier;
-      const balanceInt = toBigInt(balanceWithBonus);
-      const originalBalanceInt = toBigInt(adjustedBalance);
-      const currentBalanceInt = currentBalance ? toBigInt(currentBalance.amount) : BigInt(0);
-      
-      const currentBalanceNum = fromBigInt(currentBalanceInt);
-      
-      console.log('Current balance:', currentBalanceNum);
-      console.log('Adding balance:', adjustedBalance);
-      console.log('Gift code bonus:', giftCodeBonus);
-      console.log('Balance with bonus:', balanceWithBonus);
-      console.log('Balance to add (in internal units):', balanceInt.toString());
-      console.log('Transaction price:', price);
-
-      if (currency === 'BTC') {
-        const parsedPrice = parseFloat(price);
-        console.log('Creating BTC transaction with raw price:', price);
-        console.log('Parsed BTC price:', parsedPrice);
+    const result = await withRetry(() =>
+      prisma.$transaction(async (prisma) => {
+        const currentBalance = await prisma.balance.findUnique({
+          where: { address: address.toLowerCase() },
+          select: { amount: true }
+        });
         
-        await prisma.transaction.create({
-          data: {
-            amount: originalBalanceInt,
-            price: !isNaN(parsedPrice) ? parsedPrice : 0,
+        const bonusMultiplier = 1 + giftCodeBonus;
+        let adjustedBalance = balance;
+        
+        adjustedBalance = balance;
+        
+        const balanceWithBonus = adjustedBalance * bonusMultiplier;
+        const balanceInt = toBigInt(balanceWithBonus);
+        const originalBalanceInt = toBigInt(adjustedBalance);
+        const currentBalanceInt = currentBalance ? toBigInt(currentBalance.amount) : BigInt(0);
+        
+        const currentBalanceNum = fromBigInt(currentBalanceInt);
+        
+        console.log('Current balance:', currentBalanceNum);
+        console.log('Adding balance:', adjustedBalance);
+        console.log('Gift code bonus:', giftCodeBonus);
+        console.log('Balance with bonus:', balanceWithBonus);
+        console.log('Balance to add (in internal units):', balanceInt.toString());
+        console.log('Transaction price:', price);
+
+        if (currency === 'BTC') {
+          const parsedPrice = parseFloat(price);
+          console.log('Creating BTC transaction with raw price:', price);
+          console.log('Parsed BTC price:', parsedPrice);
+          
+          await prisma.transaction.create({
+            data: {
+              amount: originalBalanceInt,
+              price: !isNaN(parsedPrice) ? parsedPrice : 0,
+              address: address.toLowerCase(),
+              currency: currency,
+              timestamp: new Date()
+            }
+          });
+
+          return currentBalance || { amount: currentBalanceInt };
+        }
+        
+        const shouldAddToBalance = isReward ? true : addToBalance;
+        
+        const newBalance = shouldAddToBalance ? 
+          currentBalanceInt + balanceInt :
+          balanceInt;
+        
+        const transactionAmount = shouldAddToBalance ? 
+          originalBalanceInt :
+          originalBalanceInt - currentBalanceInt;
+        
+        console.log('New balance will be:', fromBigInt(newBalance));
+        
+        updatedBalance = await prisma.balance.upsert({
+          where: { address: address.toLowerCase() },
+          create: {
             address: address.toLowerCase(),
-            currency: currency,
-            timestamp: new Date()
+            amount: newBalance,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          },
+          update: {
+            amount: newBalance,
+            updatedAt: new Date()
           }
         });
 
-        return currentBalance || { amount: currentBalanceInt };
-      }
-      
-      const shouldAddToBalance = isReward ? true : addToBalance;
-      
-      const newBalance = shouldAddToBalance ? 
-        currentBalanceInt + balanceInt :
-        balanceInt;
-      
-      const transactionAmount = shouldAddToBalance ? 
-        originalBalanceInt :
-        originalBalanceInt - currentBalanceInt;
-      
-      console.log('New balance will be:', fromBigInt(newBalance));
-      
-      updatedBalance = await prisma.balance.upsert({
-        where: { address: address.toLowerCase() },
-        create: {
-          address: address.toLowerCase(),
-          amount: newBalance,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        },
-        update: {
-          amount: newBalance,
-          updatedAt: new Date()
-        }
-      });
+        const vipStatus = getVipStatus(newBalance);
 
-      const vipStatus = getVipStatus(newBalance);
-
-      await prisma.powerLevel.upsert({
-        where: { address: address.toLowerCase() },
-        create: {
-          address: address.toLowerCase(),
-          level: 1,
-          multiplier: 1.0,
-          vipStatus: vipStatus,
-          updatedAt: new Date()
-        },
-        update: {
-          vipStatus: vipStatus,
-          updatedAt: new Date()
-        }
-      });
-
-      if (transactionAmount !== BigInt(0)) {
-        const absTransactionAmount = transactionAmount < BigInt(0) ? -transactionAmount : transactionAmount;
-        await prisma.transaction.create({
-          data: {
-            amount: absTransactionAmount,
-            price: price || 0,
+        await prisma.powerLevel.upsert({
+          where: { address: address.toLowerCase() },
+          create: {
             address: address.toLowerCase(),
-            currency: isReward ? 'REWARD' : currency,
-            timestamp: new Date()
+            level: 1,
+            multiplier: 1.0,
+            vipStatus: vipStatus,
+            updatedAt: new Date()
+          },
+          update: {
+            vipStatus: vipStatus,
+            updatedAt: new Date()
           }
         });
 
-        await initializeStageProgress(prisma);
-      }
+        if (transactionAmount !== BigInt(0)) {
+          const absTransactionAmount = transactionAmount < BigInt(0) ? -transactionAmount : transactionAmount;
+          await prisma.transaction.create({
+            data: {
+              amount: absTransactionAmount,
+              price: price || 0,
+              address: address.toLowerCase(),
+              currency: isReward ? 'REWARD' : currency,
+              timestamp: new Date()
+            }
+          });
 
-      return updatedBalance;
-    });
+          await initializeStageProgress(prisma);
+        }
+
+        return updatedBalance;
+      })
+    );
 
     const finalBalance = fromBigInt(result.amount);
     console.log('Updated balance:', finalBalance);
@@ -487,6 +523,31 @@ app.get('*', (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Handle graceful shutdown
+const gracefulShutdown = async () => {
+  console.log('Received shutdown signal. Closing database connections...');
+  try {
+    await prisma.$disconnect();
+    console.log('Database connections closed.');
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+};
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+// Initial database connection
+prisma.$connect()
+  .then(() => {
+    console.log('Database connected successfully');
+    app.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error('Failed to connect to database:', error);
+    process.exit(1);
+  });
