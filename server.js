@@ -3,17 +3,70 @@ const { PrismaClient } = require('@prisma/client');
 const cors = require('cors');
 const path = require('path');
 
-// Create Prisma client with connection pooling
+// Create Prisma client with connection pooling and better retry logic
 const prisma = new PrismaClient({
   log: ['query', 'error', 'warn'],
   datasources: {
     db: {
       url: process.env.DATABASE_URL
     }
+  },
+  errorFormat: 'minimal',
+  __internal: {
+    engine: {
+      cwd: process.cwd(),
+      binaryPath: process.env.PRISMA_QUERY_ENGINE_BINARY,
+      retry: {
+        maxRetries: 5,
+        initialDelay: 100,
+        maxDelay: 2000,
+        factor: 2,
+        jitter: 0.2
+      }
+    }
   }
 });
 
-// Helper function to safely convert any value to BigInt
+// Connection management
+let isConnected = false;
+const maxReconnectAttempts = 10;
+const reconnectInterval = 5000;
+let reconnectAttempts = 0;
+
+const connectWithRetry = async () => {
+  while (!isConnected && reconnectAttempts < maxReconnectAttempts) {
+    try {
+      await prisma.$connect();
+      isConnected = true;
+      reconnectAttempts = 0;
+      console.log('Successfully connected to database');
+    } catch (error) {
+      console.error('Failed to connect to database:', error);
+      reconnectAttempts++;
+      console.log(`Retrying connection (${reconnectAttempts}/${maxReconnectAttempts}) in ${reconnectInterval}ms...`);
+      await new Promise(resolve => setTimeout(resolve, reconnectInterval));
+    }
+  }
+
+  if (!isConnected) {
+    console.error('Max reconnection attempts reached. Exiting...');
+    process.exit(1);
+  }
+};
+
+// Connection event handlers
+process.on('beforeExit', async () => {
+  console.log('Prisma Client is disconnecting');
+  isConnected = false;
+  try {
+    await prisma.$disconnect();
+    console.log('Successfully disconnected Prisma Client');
+  } catch (error) {
+    console.error('Error disconnecting:', error);
+  }
+});
+
+// Helper functions
 const toBigInt = (value) => {
   if (typeof value === 'bigint') return value;
   if (typeof value === 'number') return BigInt(Math.round(value));
@@ -22,13 +75,11 @@ const toBigInt = (value) => {
   return BigInt(0);
 };
 
-// Helper function to safely convert BigInt to number
 const fromBigInt = (value) => {
   const bigIntValue = toBigInt(value);
   return Number(bigIntValue);
 };
 
-// Helper function to determine VIP status based on balance
 const getVipStatus = (balance) => {
   const balanceNum = typeof balance === 'bigint' ? Number(balance) : Number(balance);
   console.log('Calculating VIP status for balance:', balanceNum);
@@ -53,16 +104,15 @@ const getVipStatus = (balance) => {
   return 'Bronze';
 };
 
-// Helper function to determine stage based on progress
 const getStageFromProgress = (progress) => {
   const stageThresholds = {
-    7: 90,  // Stage 7: 90-100%
-    6: 75,  // Stage 6: 75-89.99%
-    5: 60,  // Stage 5: 60-74.99%
-    4: 45,  // Stage 4: 45-59.99%
-    3: 30,  // Stage 3: 30-44.99%
-    2: 15,  // Stage 2: 15-29.99%
-    1: 0    // Stage 1: 0-14.99%
+    7: 90,
+    6: 75,
+    5: 60,
+    4: 45,
+    3: 30,
+    2: 15,
+    1: 0
   };
 
   for (const [stage, threshold] of Object.entries(stageThresholds)) {
@@ -74,22 +124,25 @@ const getStageFromProgress = (progress) => {
   return 1;
 };
 
-// Helper function to calculate total amount raised
 const calculateTotalRaised = async (prisma) => {
-  const result = await prisma.$queryRaw`
-    SELECT 
-      COALESCE(SUM(CASE 
-        WHEN currency = 'USDT' THEN amount
-        WHEN currency = 'BNB' THEN amount
-        ELSE amount
-      END), 0) as total_amount
-    FROM "Transaction"
-    WHERE currency NOT IN ('REWARD', 'BTC', 'CAT0')
-  `;
-  return toBigInt(Math.round(result[0].total_amount * 100));
+  try {
+    const result = await prisma.$queryRaw`
+      SELECT 
+        COALESCE(SUM(CASE 
+          WHEN currency = 'USDT' THEN amount
+          WHEN currency = 'BNB' THEN amount
+          ELSE amount
+        END), 0) as total_amount
+      FROM "Transaction"
+      WHERE currency NOT IN ('REWARD', 'BTC', 'CAT0')
+    `;
+    return toBigInt(Math.round(result[0].total_amount * 100));
+  } catch (error) {
+    console.error('Error calculating total raised:', error);
+    throw error;
+  }
 };
 
-// Helper function to initialize or update stage progress
 const initializeStageProgress = async (prisma) => {
   try {
     const totalAmount = await calculateTotalRaised(prisma);
@@ -135,33 +188,39 @@ app.use(cors({
 }));
 
 app.use(express.json());
-
-// Serve static files from the React build directory
 app.use(express.static(path.join(__dirname, 'build')));
 
-// Helper function to retry database operations
-const withRetry = async (operation, maxRetries = 3) => {
+// Enhanced retry logic for database operations
+const withRetry = async (operation, maxRetries = 5) => {
   let lastError;
   for (let i = 0; i < maxRetries; i++) {
     try {
+      if (!isConnected) {
+        await connectWithRetry();
+      }
       return await operation();
     } catch (error) {
       console.error(`Attempt ${i + 1} failed:`, error);
       lastError = error;
+      
+      // Check if it's a connection error
+      if (error.message?.includes('terminating connection') || 
+          error.message?.includes('Connection terminated') ||
+          error.message?.includes('Cannot find module')) {
+        isConnected = false;
+        await connectWithRetry();
+      }
+      
       if (i < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
-        try {
-          await prisma.$connect();
-        } catch (connectError) {
-          console.error('Reconnection failed:', connectError);
-        }
+        const delay = Math.min(1000 * Math.pow(2, i), 10000);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
   }
   throw lastError;
 };
 
-// API Routes with retry logic
+// API Routes with enhanced error handling
 app.get('/api/progress', async (req, res) => {
   try {
     const progress = await withRetry(() => initializeStageProgress(prisma));
@@ -310,6 +369,51 @@ app.get('/api/balance/:address', async (req, res) => {
   }
 });
 
+app.get('/api/power-level/:address', async (req, res) => {
+  console.log('GET power level request received for address:', req.params.address);
+  const { address } = req.params;
+
+  try {
+    const powerLevel = await withRetry(() =>
+      prisma.powerLevel.findUnique({
+        where: { address: address.toLowerCase() }
+      })
+    );
+
+    if (!powerLevel) {
+      // Return default values for new users
+      return res.json({
+        success: true,
+        powerLevel: {
+          level: 1,
+          multiplier: 1.0,
+          vipStatus: 'Bronze'
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      powerLevel: {
+        level: powerLevel.level,
+        multiplier: powerLevel.multiplier,
+        vipStatus: powerLevel.vipStatus
+      }
+    });
+  } catch (error) {
+    console.error('Power level API error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      powerLevel: {
+        level: 1,
+        multiplier: 1.0,
+        vipStatus: 'Bronze'
+      }
+    });
+  }
+});
+
 app.get('/api/reward-balance/:address', async (req, res) => {
   console.log('GET reward balance request received for address:', req.params.address);
   const { address } = req.params;
@@ -402,8 +506,6 @@ app.post('/api/balance/:address', async (req, res) => {
         
         const bonusMultiplier = 1 + giftCodeBonus;
         let adjustedBalance = balance;
-        
-        adjustedBalance = balance;
         
         const balanceWithBonus = adjustedBalance * bonusMultiplier;
         const balanceInt = toBigInt(balanceWithBonus);
@@ -523,31 +625,54 @@ app.get('*', (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 
-// Handle graceful shutdown
-const gracefulShutdown = async () => {
-  console.log('Received shutdown signal. Closing database connections...');
+// Enhanced graceful shutdown
+const gracefulShutdown = async (signal) => {
+  console.log(`Received ${signal}. Starting graceful shutdown...`);
+  
+  // Set a timeout for the graceful shutdown
+  const shutdownTimeout = setTimeout(() => {
+    console.error('Forced shutdown due to timeout');
+    process.exit(1);
+  }, 10000);
+
   try {
-    await prisma.$disconnect();
-    console.log('Database connections closed.');
+    if (isConnected) {
+      console.log('Closing database connections...');
+      await prisma.$disconnect();
+      isConnected = false;
+      console.log('Database connections closed.');
+    }
+    
+    clearTimeout(shutdownTimeout);
+    console.log('Graceful shutdown completed.');
     process.exit(0);
   } catch (error) {
     console.error('Error during shutdown:', error);
+    clearTimeout(shutdownTimeout);
     process.exit(1);
   }
 };
 
-process.on('SIGTERM', gracefulShutdown);
-process.on('SIGINT', gracefulShutdown);
+// Handle various shutdown signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  gracefulShutdown('uncaughtException');
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown('unhandledRejection');
+});
 
-// Initial database connection
-prisma.$connect()
+// Initial database connection and server start
+connectWithRetry()
   .then(() => {
-    console.log('Database connected successfully');
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
     });
   })
   .catch((error) => {
-    console.error('Failed to connect to database:', error);
+    console.error('Failed to start server:', error);
     process.exit(1);
   });
